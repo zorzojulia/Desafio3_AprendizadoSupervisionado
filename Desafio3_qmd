@@ -1,0 +1,86 @@
+---
+title: "Desafio 3 - Aprendizado Supervisionado"
+format: html
+editor: visual
+author: Júlia Zorzo Ferreira
+---
+
+# Dados
+## Base
+```{r}
+# instalando os pacotes:
+# install.packages("palmerpenguins")
+# install.packages("xgboost")
+
+# carregando bibliotecas:
+library(palmerpenguins)
+library(dplyr)
+library(rsample)
+library(ranger) 
+library(xgboost)
+library(ggplot2)
+library(tidyr)
+
+# observando os dados:
+data(penguins)  
+head(penguins)
+str(penguins) # 8 variáveis
+View(penguins)
+```
+
+A base de dados contém 344 observações e 8 variáveis, sendo elas, na ordem em que aparecem:
+espécie, ilha, comprimento do bico, profundidade do bico, comprimento da nadadeira, massa corporal, sexo, ano (de coleta da informação). A ideia é utilizá-las para classificação da resposta.
+
+## Resposta: Species
+```{r}
+(tab <- data.frame(
+  n = as.vector(table(penguins$species)),
+  prop = round(as.vector(prop.table(table(penguins$species))) * 100, 1),
+  row.names = names(table(penguins$species))
+))
+```
+Espécies Adelie, Chinstrap e Gentoo.
+
+## Preditoras: Medidas morfológicas
+São elas bill_length_mm (comprimento do bico), bill_depth_mm (profundidade do bico), flipper_length_mm (comprimento da nadadeira) e body_mass_g (massa corporal), portanto, o problema é classificar a espécie do penguim com base em sua morfologia.
+
+## Valores Ausentes
+```{r}
+# Ausentes nas colunas
+colSums(is.na(penguins))     
+```
+Temos 2 valores ausentes em todas as preditoras e 11 em sexo. Não há ausentes em espécie, ilha ou ano. Ao todo, há 19 valores ausentes.
+
+Como sexo é a única variável não preditora com valores ausentes, verifica-se quais das 11 linhas tem somente sexo ausente pela conferência de linhas totais da base que contenham ao menos um valor NA:
+```{r}
+penguins[!complete.cases(penguins), ]
+```
+
+Observa-se que duas linhas têm todas as preditoras faltando, são elas:
+```{r}
+penguins |> filter(is.na(bill_length_mm))
+```
+### Base tratada
+As duas linhas com todas as preditoras ausentes serão removidas da base e as demais com somente sexo ausente serão mantidas, já que essa variável não é preditora.
+```{r}
+dados <- penguins |>
+  tidyr::drop_na(bill_length_mm, bill_depth_mm,
+                 flipper_length_mm, body_mass_g)
+# conector lógico "OU": como todas as linhas sem preditoras não têm nenhuma delas preenchidas, temos o mesmo resultado que o conector "E"
+
+nrow(dados)
+```
+A base final tem 342 observações.
+
+# Modelagem
+
+## Random Forest
+```{r}
+
+```
+
+## Gradient Boosting
+```{r}
+
+```
+
