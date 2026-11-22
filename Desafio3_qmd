@@ -6,13 +6,14 @@ author: Júlia Zorzo Ferreira
 ---
 
 # Dados
+
 ## Base
+
 ```{r}
-# instalando os pacotes:
 # install.packages("palmerpenguins")
 # install.packages("xgboost")
+install.packages("rsample")
 
-# carregando bibliotecas:
 library(palmerpenguins)
 library(dplyr)
 library(rsample)
@@ -20,6 +21,7 @@ library(ranger)
 library(xgboost)
 library(ggplot2)
 library(tidyr)
+library(caret)
 
 # observando os dados:
 data(penguins)  
@@ -28,10 +30,10 @@ str(penguins) # 8 variáveis
 View(penguins)
 ```
 
-A base de dados contém 344 observações e 8 variáveis, sendo elas, na ordem em que aparecem:
-espécie, ilha, comprimento do bico, profundidade do bico, comprimento da nadadeira, massa corporal, sexo, ano (de coleta da informação). A ideia é utilizá-las para classificação da resposta.
+A base de dados contém 344 observações e 8 variáveis, sendo elas, na ordem em que aparecem: espécie, ilha, comprimento do bico, profundidade do bico, comprimento da nadadeira, massa corporal, sexo, ano (de coleta da informação). A ideia é utilizá-las para classificação da resposta.
 
 ## Resposta: Species
+
 ```{r}
 (tab <- data.frame(
   n = as.vector(table(penguins$species)),
@@ -42,26 +44,57 @@ espécie, ilha, comprimento do bico, profundidade do bico, comprimento da nadade
 Espécies Adelie, Chinstrap e Gentoo.
 
 ## Preditoras: Medidas morfológicas
+
 São elas bill_length_mm (comprimento do bico), bill_depth_mm (profundidade do bico), flipper_length_mm (comprimento da nadadeira) e body_mass_g (massa corporal), portanto, o problema é classificar a espécie do penguim com base em sua morfologia.
 
-## Valores Ausentes
+### Matriz de correlação
+```{r}
+round(cor(dados_m[, preditoras]), 2)
+```
+Alta correlação entre nadadeira e massa. Correlacoes relativamente altas pra outras variáveis.
+
+### Boxplot
+```{r}
+dados_m |>
+  pivot_longer(cols = all_of(preditoras),
+               names_to = "variavel", values_to = "valor") |>
+  ggplot(aes(x = species, y = valor, fill = species)) +
+  geom_boxplot(show.legend = FALSE) +
+  facet_wrap(~ variavel, scales = "free_y") +
+  scale_fill_manual(values = c("Adelie"    = "darkorange",
+                               "Chinstrap" = "purple",
+                               "Gentoo"    = "cyan4")) +
+  labs(x = NULL, y = NULL,
+       title = "Medidas morfológicas por espécie") +
+  theme_minimal()
+```
+Gentoo bem diferente das demais. Adelie e Chinstrap similares
+
+## Tratamentos
+### Valores Ausentes
 ```{r}
 # Ausentes nas colunas
 colSums(is.na(penguins))     
 ```
+
 Temos 2 valores ausentes em todas as preditoras e 11 em sexo. Não há ausentes em espécie, ilha ou ano. Ao todo, há 19 valores ausentes.
 
 Como sexo é a única variável não preditora com valores ausentes, verifica-se quais das 11 linhas tem somente sexo ausente pela conferência de linhas totais da base que contenham ao menos um valor NA:
+
 ```{r}
 penguins[!complete.cases(penguins), ]
 ```
 
 Observa-se que duas linhas têm todas as preditoras faltando, são elas:
+
 ```{r}
 penguins |> filter(is.na(bill_length_mm))
 ```
+
 ### Base tratada
+
 As duas linhas com todas as preditoras ausentes serão removidas da base e as demais com somente sexo ausente serão mantidas, já que essa variável não é preditora.
+
 ```{r}
 dados <- penguins |>
   tidyr::drop_na(bill_length_mm, bill_depth_mm,
@@ -70,17 +103,131 @@ dados <- penguins |>
 
 nrow(dados)
 ```
+
 A base final tem 342 observações.
+
 
 # Modelagem
 
-## Random Forest
-```{r}
+Os dados foram divididos em 70% para treino e 30% para teste, com estratificação por espécie.
 
+```{r}
+# mantem só a resposta e as preditoras
+dados_m <- dados |>
+  select(species, bill_length_mm, bill_depth_mm,
+         flipper_length_mm, body_mass_g)
+
+set.seed(123)
+idx <- createDataPartition(dados_m$species, p = 0.7, list = FALSE)
+
+treino <- dados_m[idx, ]
+teste  <- dados_m[-idx, ]
+
+table(treino$species) # Adelie 106, Chinstrap 48 e Gentoo 87
+table(teste$species)  # Adelie 45,  Chinstrap 20 e Gentoo 36
+
+preditoras <- setdiff(names(dados_m), "species")
+niveis     <- levels(dados_m$species)
+```
+
+## Random Forest
+
+Floresta com 500 árvores. A importância das variáveis é calculada por permutação.
+```{r}
+rf <- ranger(species ~ ., data = treino, num.trees = 500,
+             importance = "permutation", seed = 123)
+
+pred_rf <- predict(rf, teste)$predictions
 ```
 
 ## Gradient Boosting
-```{r}
 
+Usando xgboost, 100 árvores de profundidade 3 e taxa de aprendizado de 0,1.
+```{r}
+dtreino <- xgb.DMatrix(as.matrix(treino[, preditoras]),
+                       label = as.integer(treino$species) - 1)
+dteste  <- xgb.DMatrix(as.matrix(teste[, preditoras]))
+
+gb <- xgb.train(params = list(objective = "multi:softprob",
+                              num_class = length(niveis),
+                              eta = 0.1, max_depth = 3),
+                data = dtreino, nrounds = 100, verbose = 0)
+
+# classe com maior prob pra cada penguim
+prob <- predict(gb, dteste)
+if (!is.matrix(prob)) prob <- matrix(prob, ncol = length(niveis), byrow = TRUE)
+pred_gb <- factor(niveis[max.col(prob)], levels = niveis)
 ```
 
+# Comparação dos modelos
+No conjunto de teste: comparação com matriz de confusão e MCC macro (média do MCC de cada classe)
+```{r}
+# Matrizes
+(cm_rf <- table(Real = teste$species, Previsto = pred_rf))
+(cm_gb <- table(Real = teste$species, Previsto = pred_gb))
+# ficaram iguais
+
+# mcc macro com + acurácia balanceada
+mcc_macro <- function(cm) {
+  mean(sapply(seq_len(nrow(cm)), function(i) {
+    tp <- cm[i, i]
+    fp <- sum(cm[, i]) - tp
+    fn <- sum(cm[i, ]) - tp
+    tn <- sum(cm) - tp - fp - fn
+    den <- sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    if (den == 0) 0 else (tp * tn - fp * fn) / den
+  }))
+}
+
+acc_bal <- function(cm) mean(diag(cm) / rowSums(cm))
+
+data.frame(
+  modelo    = c("Random Forest", "Gradient Boosting"),
+  MCC_macro = round(c(mcc_macro(cm_rf), mcc_macro(cm_gb)), 4),
+  acuracia_balanceada = round(c(acc_bal(cm_rf), acc_bal(cm_gb)), 4)
+)
+# mesmos resultados: Os pinguins são quase perfeitamente separáveis dadas as metricas altas
+```
+1 penguim adelie classificado como Chinstrap -> faz sentido pq são muito parecidas, verificado no boxplot
+
+# Importância das variáveis
+Importâncias dos dois modelos em escalas diferentes (permutação no Random Forest e ganho no Gradient Boosting) -> convertidas em %. Aqui entra o ranking.
+```{r}
+imp_rf <- ranger::importance(rf)
+imp_gb <- xgb.importance(model = gb)
+
+imp <- bind_rows(
+  tibble(variavel    = names(imp_rf),
+         importancia = 100 * imp_rf / sum(imp_rf),
+         modelo      = "Random Forest"),
+  tibble(variavel    = imp_gb$Feature,
+         importancia = 100 * imp_gb$Gain / sum(imp_gb$Gain),
+         modelo      = "Gradient Boosting")
+) |>
+  group_by(modelo) |>
+  mutate(ranking = rank(-importancia)) |>
+  ungroup()
+
+# tabela com o ranking de cada modelo
+imp |> arrange(modelo, ranking)
+# mesma ordem pros dois modelos
+```
+Comp. do bico tem mais importancia no gb do que no rf. massa corporal tem mais de 2x a importancia no rf se comparado ao gb e, junto com o comprimento da nadadeira, tem as maiores diferencas de importancia das 4 preditoras. A profundidade do bico é mais importante no rf.
+
+Importância elevada: a variável contribui mais para separar as espécies e para a qualidade preditiva
+
+## Gráfico
+```{r}
+ggplot(imp, aes(x = reorder(variavel, importancia),
+                y = importancia, fill = modelo)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  scale_fill_manual(values = c("Random Forest"     = "darkorange",
+                               "Gradient Boosting" = "cyan4")) +
+  labs(x = NULL, y = "Importância relativa (%)", fill = NULL,
+       title = "Importância das variáveis: Random Forest vs Gradient Boosting") +
+  theme_minimal()
+```
+
+## Problema da correlação
+flipper_length_mm e body_mass_g são muito correlacionadas, o que pode dividir a importância entre elas. O resultado de importancia melhor no modelo RF se da pela aleatoriedade da selecao das arvores, enquanto que no gb há uma selecao de variável pelo critério de maior ganho, então ela enxerga todas as variáveis e deixa a de menor ganho por último.
