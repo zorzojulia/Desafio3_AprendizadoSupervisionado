@@ -53,6 +53,20 @@ round(cor(dados_m[, preditoras]), 2)
 ```
 Alta correlação entre nadadeira e massa. Correlacoes relativamente altas pra outras variáveis.
 
+```{r}
+cor_long <- as.data.frame(as.table(cor(dados_m[, preditoras])))
+names(cor_long) <- c("var1", "var2", "correlacao")
+
+ggplot(cor_long, aes(var1, var2, fill = correlacao)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(correlacao, 2))) +
+  scale_fill_gradient2(low = "purple", mid = "white", high = "darkorange",
+                       limits = c(-1, 1)) +
+  labs(x = NULL, y = NULL, fill = "Correlação",
+       title = "Correlação entre as preditoras") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
 ### Boxplot
 ```{r}
 dados_m |>
@@ -68,7 +82,7 @@ dados_m |>
        title = "Medidas morfológicas por espécie") +
   theme_minimal()
 ```
-Gentoo bem diferente das demais. Adelie e Chinstrap similares
+Gentoo bem diferente das demais. Adelie e Chinstrap similares.
 
 ## Tratamentos
 ### Valores Ausentes
@@ -160,12 +174,29 @@ pred_gb <- factor(niveis[max.col(prob)], levels = niveis)
 ```
 
 # Comparação dos modelos
-No conjunto de teste: comparação com matriz de confusão e MCC macro (média do MCC de cada classe)
+No conjunto de teste: comparação com matriz de confusão e MCC macro (média do MCC de cada classe) + Acurácia balanceada
 ```{r}
 # Matrizes
 (cm_rf <- table(Real = teste$species, Previsto = pred_rf))
 (cm_gb <- table(Real = teste$species, Previsto = pred_gb))
 # ficaram iguais
+
+ggplot(as.data.frame(cm_rf), aes(x = Previsto, y = Real, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), size = 6) +
+  scale_fill_gradient(low = "white", high = "cyan4") +
+  scale_y_discrete(limits = rev) +
+  labs(title = "Matriz de confusão: Random Forest", fill = "Pinguins") +
+  theme_minimal()
+
+ggplot(as.data.frame(cm_gb), aes(x = Previsto, y = Real, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), size = 6) +
+  scale_fill_gradient(low = "white", high = "darkorange") +
+  scale_y_discrete(limits = rev) +
+  labs(title = "Matriz de confusão: Gradient Boosting", fill = "Pinguins") +
+  theme_minimal()
+
 
 # mcc macro com + acurácia balanceada
 mcc_macro <- function(cm) {
@@ -222,8 +253,8 @@ ggplot(imp, aes(x = reorder(variavel, importancia),
                 y = importancia, fill = modelo)) +
   geom_col(position = "dodge") +
   coord_flip() +
-  scale_fill_manual(values = c("Random Forest"     = "darkorange",
-                               "Gradient Boosting" = "cyan4")) +
+  scale_fill_manual(values = c("Random Forest"     = "cyan4",
+                               "Gradient Boosting" = "darkorange")) +
   labs(x = NULL, y = "Importância relativa (%)", fill = NULL,
        title = "Importância das variáveis: Random Forest vs Gradient Boosting") +
   theme_minimal()
